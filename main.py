@@ -15,7 +15,7 @@ class hindi_model():
         # let data store by differet title
         self.model_name = model_name
         self.context = list(hindi_data['context'])
-        self.question = list(hindi_data['question'])
+        self.question = list(hindi_data['question']) 
         self.answer = list(hindi_data['answer_text'])
         self.answer_start = list(hindi_data['answer_start'])
 
@@ -80,13 +80,13 @@ class hindi_model():
 
                     tokenized_answer = self.tokenizer(self.answer[i], add_special_tokens = True)
 
-                    print(f'anwer before token:{self.answer[i]}\ntokenized answer:{tokenized_answer}\ntoken to id{self.tokenizer.convert_ids_to_tokens(tokenized_answer.input_ids)}')
+                    #print(f'anwer before token:{self.answer[i]}\ntokenized answer:{tokenized_answer}\ntoken to id{self.tokenizer.convert_ids_to_tokens(tokenized_answer.input_ids)}')
 
                     for itr in range(context_token_max_length - len(tokenized_answer.input_ids)):
                         #print(self.tokenizer.convert_ids_to_tokens(tokenized_context.input_ids[itr: itr + len(tokenized_answer.input_ids) - 2]))  # the reason why we need to minus 2 is tokenized_answer.input_ids has 3 in the front and 4 in the end 
                         if tokenized_context.input_ids[itr : itr + len(tokenized_answer.input_ids) - 2] == tokenized_answer.input_ids[1 : -1]:                          
                             answer_label = [itr, itr + len(tokenized_answer.input_ids) - 2]                    
-                            print("find\n")
+                            #print("find\n")
                             all_correct = all_correct + 1
 
                     # this part is creating the correct label in the untokenized context ( a better solution, but we want to start training first )
@@ -136,7 +136,7 @@ class hindi_model():
             torch.LongTensor(token_type_ids),
             torch.LongTensor(label)
         )
-
+        print('===================finished creating dataset==========================')
         return finished_dataset
 
     def change_dataset_into_dataloader(self):
@@ -188,63 +188,62 @@ class hindi_model():
         epoch_iterator = tqdm(self.dataloader, desc=f'loss{loss}')
         for step, batch in enumerate(epoch_iterator):
             output = self.model(input_ids = batch[0], attention_mask = batch[1], token_type_ids = batch[2])
+            softmax_func = torch.nn.Softmax(dim = -1)
             print('===================')
             #print(f'step{step}')
             #print(f'batch{batch}')
-            print(f'output : {output[0]}')
-            print(len(output[0][0]))
-            for i in range(len(output[0])):
-                for j in range(len(output[0][i])):
-                    print(f'output[0][i][j] : {output[0][i][j]}')
-                    tmp = self.output(output[0][i][j])
-                    print(tmp) 
-
+            #print(f'output : {output[0]}')
+            #print(len(output[0][0]))
+            # for i in range(len(output[0])):
+            #     for j in range(len(output[0][i])):
+            #         #print(f'output[0][i][j] : {output[0][i][j]}')
+            #         tmp = self.output(output[0][i][j])
+            #         print(tmp) 
+            #         print(softmax_func(tmp))
+                    
             logits = self.output(output[0])
+            # print(f'logits length : {len(logits)}') #8
+            # print(f'logits : {logits}') 
+            # print(f'length logits[0] : {len(logits[0])}') #250
+            # exit()
             #print(logits)
-            B_logits, I_logits, O_logits = logits.split(1, dim = -1) ###
-            print(f'B logits:{B_logits}')
-            print(f'I logits:{I_logits}')
-            print(f'O logits:{O_logits}')
-            # transport a n * 1 vector into a 1 * n vector
-            B_logits = B_logits.squeeze(-1).contiguous() 
-            I_logits = I_logits.squeeze(-1).contiguous()
-            O_logits = O_logits.squeeze(-1).contiguous()
+            
+            # this function can is for softmax every element in output (important)
+            for itr1 in range(len(logits)):
+                for itr2 in range(len(logits[itr1])):
+                    # print(f'logits[itr1][itr2] : {logits[itr1][itr2]}')
+                    # print(f'softmaxed logits[itr1][itr2] : {softmax_func(logits[itr1][itr2])}')
+                    logits[itr1][itr2] = softmax_func(logits[itr1][itr2])
+            logits = logits.squeeze(-1).contiguous()
             #print(f'start logits:{start_logits}')
             #print(f'end logits:{end_logits}')
-            print(len(B_logits))
-            print(f'length of B_logits[0] : {len(B_logits[0])}')
-            loss = self.loss_function(B_logits, I_logits, O_logits, batch[3])
+            print(f'logits after squeezed : {logits}')
+            loss = self.loss_function(logits, batch[3])
             print('===================')
 
         return 'finished'
     
-    def loss_function(self, B_logits, I_logits, O_logits, label): # the last step of the project
+    def loss_function(self, logits, label): # the last step of the project
         print(label)
+        loss = 0.0
         batch_size = len(label[0])
-        print(len(B_logits[0]))
+        # should be the same as your tokenized length 
+        print(logits[0])
         #print(f'start logits[0] length : {len(start_logits[0][0])}')
         for i in range(batch_size):
-            if label[0][i] != -1 and label[0][i] != -1:
-                B_label = torch.zeros(len(B_logits[i]))
-                I_label = torch.zeros(len(I_logits[i]))
-                O_label = torch.zeros(len(O_logits[i]))
-                B_label[label[0]] = 1
+            transformed_label = torch.zeros(len(logits[i]), dtype=torch.long )
+            print(f'the label tensor : {label[i]}')
+            #create tensor for cross entropy
+            if label[i][0] != -1 and label[i][1] != -1:
+                transformed_label[label[i][0]] = 1 # label B
+                transformed_label[label[i][0] + 1 : label[i][1]] = 2 #label I
 
-                # change the label into the training form
-                if label[0] != (label[1] - 1):
-                    I_label[label[0] : label[1]] = 1
-                for itr in range(len(O_label)):
-                    if I_label[itr] == 0 and B_label[itr] == 0:
-                        O_label[itr] = 1
-     
-                loss_fun = torch.nn.CrossEntropyLoss()
-                loss = loss_fun(B_logits, B_label) + loss_fun(I_logits, I_label) + loss_fun(O_logits, O_label)
-                
-                print(loss)
-                return loss
-            else:
-                return None
-
+            print('==================start count loss=========================')
+            loss_fun = torch.nn.CrossEntropyLoss()
+            print(f'logits : {logits[batch_size]}\nlabel : {label}')
+            print(f'loss : {loss_fun(logits[batch_size], transformed_label)}')
+        return loss
+    
     def forword(self):
         loss = 0.0
         log_step = 50
